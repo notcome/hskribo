@@ -10,10 +10,14 @@ import           Text.Megaparsec.Prim  (MonadParsec(..))
 
 import Text.Hskribo.AST
 
+import Debug.Trace
+
 pHskribo :: String -> String -> Either String SExpr
-pHskribo name input = case MP.parse (alex pList) name input of
-  Left  err -> Left $ show err
-  Right ast -> Right ast
+pHskribo name input = let
+  parser = aSkipSpace *> alex pList
+  in case MP.parse parser name input of
+    Left  err -> Left $ show err
+    Right ast -> Right ast
 
 pExpr :: MonadParsec s m Char => m SExpr
 pExpr = alex $ pList <|> pText <|> pAtom
@@ -25,13 +29,15 @@ pAtom :: MonadParsec s m Char => m SExpr
 pAtom =   fmap SInt   ML.integer
       <|> fmap SFloat ML.float
       <|> fmap SStr   pString
+      <|> fmap SName  pName
   where
     pString = MP.char '"' *> MP.manyTill ML.charLiteral (MP.char '"')
+    pName   = MP.some (MP.noneOf "()[]{}<># \t\n\r")
 
 aSkipSpace :: MonadParsec s m Char => m ()
 aSkipSpace = ML.space aSpace
-                      (ML.skipLineComment  "@@")
-                      (ML.skipBlockComment "@-" "-@")
+                      (ML.skipLineComment  "##")
+                      (ML.skipBlockComment "#=" "=#")
   where
     aSpace    = void MP.eol <|> void (MP.tab <|> MP.char ' ')
 
@@ -55,11 +61,11 @@ pText = fmap SText $ (pText_ '[' ']') <|> (pText_ '{' '}') <|> (pText_ '<' '>')
         Just x  -> return $ SLine x
         Nothing -> return $ SLine $ SStr ""
     pScheme     = MP.try (MP.char ',') *> pList
-    pTextLit  e = SStr <$> MP.someTill ML.charLiteral till
-      where till = bSkipSpace <|> void (MP.char e)
+    pTextLit  e = SStr <$> MP.some char where
+      char = MP.notFollowedBy (MP.oneOf $ e:" \t\n\r") *> ML.charLiteral
 
 bSkipSpace :: MonadParsec s m Char => m ()
-bSkipSpace = do _ <- MP.tab <|> MP.char ' '; return ()
+bSkipSpace = do _ <- MP.many $ MP.tab <|> MP.char ' '; return ()
 
 blex :: MonadParsec s m Char => m a -> m a
 blex = ML.lexeme bSkipSpace

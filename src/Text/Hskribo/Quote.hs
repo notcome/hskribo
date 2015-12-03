@@ -1,10 +1,13 @@
+{-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE TemplateHaskell           #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 
 module Text.Hskribo.Quote where
 
-import Control.Monad
 import Data.Char
+import Data.Monoid
+import Data.String
+
 import Language.Haskell.TH
 import Language.Haskell.TH.Lib
 import Language.Haskell.TH.Quote
@@ -23,6 +26,7 @@ hskribo = QuasiQuoter
       ast <- case pHskribo (show loc) input of
         Left parseError -> fail parseError
         Right parseRes  -> return parseRes
+      runIO $ print ast
       toHaskell ast
   , quotePat  = fail "hskribo in pattern not allowed."
   , quoteType = fail "hskribo in type not allowed."
@@ -40,20 +44,20 @@ nameToValue name = do
     parseName ('-':x:xs) = parseName (toUpper x : xs)
     parseName (x:xs)     = x : parseName xs
 
-joinSpaced :: String -> String -> String
-joinSpaced lhs rhs = lhs ++ " " ++ rhs
+joinSpaced :: (IsString a, Monoid a) => a -> a -> a
+joinSpaced lhs rhs = lhs <> " " <> rhs
 
-joinLined :: String -> String -> String
-joinLined lhs rhs = lhs ++ rhs
+joinLined :: (IsString a, Monoid a) => a -> a -> a
+joinLined lhs rhs = lhs <> rhs
 
 toHaskell :: SExpr -> ExpQ
 toHaskell (SInt   num) = [|num|]
 toHaskell (SFloat num) = [|num|]
 toHaskell (SStr   str) = [|str|]
 toHaskell (SName name)
-  | '[':']':name' <- name = nameToValue name'
-  | ':'    :name' <- name = nameToValue name'
-  | otherwise             = nameToValue name
+  | '@':name' <- name = nameToValue name'
+  | ':':name' <- name = nameToValue name'
+  | otherwise         = nameToValue name
 
 toHaskell (SText  xs)  = foldl combine zero xs
   where
@@ -73,7 +77,7 @@ slistToHaskell f xs = let
   fValue'       = combineAttrs fValue attrs
   args'         = map toHaskell args
   in if isFromList f
-     then appE fValue' $ listE args'
+     then appE fValue' $ appE [|mconcat|] $ listE args'
      else appFXs fValue' args'
   where
     takeAttrs (x1:x2:xs)
@@ -86,11 +90,11 @@ slistToHaskell f xs = let
     combineAttrs = foldl (\f (a, b) -> let
       a' = toHaskell a
       b' = toHaskell b
-      in uInfixE a' [|(<!>)|] b')
+      in uInfixE f [|(<!>)|] $ appE a' b')
 
 isFromList :: SExpr -> Bool
-isFromList (SName ('[':']':_)) = True
-isFromList _                   = False
+isFromList (SName ('@':_)) = True
+isFromList _               = False
 
 isAttribute :: SExpr -> Bool
 isAttribute (SName (':':_)) = True
